@@ -1,0 +1,11 @@
+services:
+  finance-tracker:
+    build: .
+    container_name: finance-tracker
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./exports:/app/exports
+    command: ["python", "-m", "app.main"]
