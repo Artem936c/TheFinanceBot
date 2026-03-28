@@ -253,18 +253,12 @@ class DialogService:
                 'add_expense_quick': ('expense', 'Расход'),
                 'add_opening_quick': ('opening_balance', 'Начальный баланс'),
             }
-            tx_type, tx_label = mapping[flow]
+            _tx_type, tx_label = mapping[flow]
             if step == 'amount':
-                amount = DialogService.extract_amount(text)
-                if not amount:
-                    return BotResponse(f'Не вижу корректной суммы для операции «{tx_label}». Пример: 1250.50', DialogService.nav_buttons())
-                try:
-                    parsed = TransactionService.parse_amount(amount)
-                except ValueError as exc:
-                    return BotResponse(str(exc), DialogService.nav_buttons())
-                result = await TransactionService.add_transaction(platform, user, tx_type, str(parsed), None)
-                await DialogService.reset_state(platform, user)
-                return await DialogService.home_response(platform, user, result)
+                return BotResponse(
+                    f'Введите сумму для операции «{tx_label}». Можно писать с текстом, я возьму только число.',
+                    DialogService.nav_buttons(),
+                )
 
         if flow == 'add_tx':
             if step == 'type':
@@ -405,7 +399,19 @@ class DialogService:
             }
             tx_type, tx_label = labels[flow]
             if step == 'amount':
-                return BotResponse(f'Введите сумму для операции «{tx_label}». Можно писать с текстом, я возьму только число.', DialogService.nav_buttons())
+                amount = DialogService.extract_amount(text)
+                if not amount:
+                    return BotResponse(
+                        f'Введите сумму для операции «{tx_label}». Можно писать с текстом, я возьму только число.',
+                        DialogService.nav_buttons(),
+                    )
+                try:
+                    parsed = TransactionService.parse_amount(amount)
+                except ValueError as exc:
+                    return BotResponse(str(exc), DialogService.nav_buttons())
+                result = await TransactionService.add_transaction(platform, user, tx_type, str(parsed), None)
+                await DialogService.reset_state(platform, user)
+                return await DialogService.home_response(platform, user, result)
 
         if flow == 'add_tx':
             if step == 'type':
