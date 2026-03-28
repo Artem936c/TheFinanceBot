@@ -9,6 +9,6 @@ settings = get_settings()
 telegram_bot = Bot(
     token=settings.telegram_bot_token,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-) if settings.telegram_bot_token else None
+) if settings.telegram_enabled and settings.telegram_bot_token else None
 
-telegram_dp = Dispatcher()
+telegram_dp = Dispatcher() if settings.telegram_enabled else None

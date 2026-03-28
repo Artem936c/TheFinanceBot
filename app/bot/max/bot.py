@@ -8,5 +8,5 @@ except Exception:  # pragma: no cover
     Bot = None
     Dispatcher = None
 
-max_bot = Bot(settings.max_bot_token) if settings.max_bot_token and Bot else None
-max_dp = Dispatcher() if Dispatcher else None
+max_bot = Bot(settings.max_bot_token) if settings.max_enabled and settings.max_bot_token and Bot else None
+max_dp = Dispatcher() if settings.max_enabled and Dispatcher else None

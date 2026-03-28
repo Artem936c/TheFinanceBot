@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     debug: bool = True
     sqlite_path: str = '/app/data/finance_tracker.db'
     timezone: str = 'Europe/Moscow'
+    telegram_enabled: bool = True
+    max_enabled: bool = True
     telegram_bot_token: str = ''
     max_bot_token: str = ''
     default_currency: str = 'RUB'

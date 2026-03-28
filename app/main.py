@@ -3,12 +3,26 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from app.bot.telegram.bot import telegram_bot, telegram_dp
-from app.bot.telegram.handlers import telegram_router
-from app.bot.max.bot import max_bot, max_dp
-import app.bot.max.handlers  # noqa: F401
+from app.core.config import get_settings
 from app.db.init_db import init_db
 from app.services.scheduler_service import start_scheduler
+
+settings = get_settings()
+
+if settings.telegram_enabled:
+    from app.bot.telegram.bot import telegram_bot, telegram_dp
+    from app.bot.telegram.handlers import telegram_router
+else:
+    telegram_bot = None
+    telegram_dp = None
+    telegram_router = None
+
+if settings.max_enabled:
+    from app.bot.max.bot import max_bot, max_dp
+    import app.bot.max.handlers  # noqa: F401
+else:
+    max_bot = None
+    max_dp = None
 
 logging.basicConfig(
     level=logging.INFO,
@@ -18,8 +32,11 @@ logger = logging.getLogger(__name__)
 
 
 async def run_telegram() -> None:
-    if not telegram_bot:
-        logger.warning('Telegram token is not configured. Telegram bot is disabled.')
+    if not settings.telegram_enabled:
+        logger.info('Telegram bot is disabled by TELEGRAM_ENABLED=false.')
+        return
+    if not telegram_bot or not telegram_dp or not telegram_router:
+        logger.warning('Telegram is enabled, but TELEGRAM_BOT_TOKEN is not configured.')
         return
     telegram_dp.include_router(telegram_router)
     logger.info('Starting Telegram polling')
@@ -27,8 +44,11 @@ async def run_telegram() -> None:
 
 
 async def run_max() -> None:
+    if not settings.max_enabled:
+        logger.info('MAX bot is disabled by MAX_ENABLED=false.')
+        return
     if not max_bot or not max_dp:
-        logger.warning('MAX token is not configured or maxapi is unavailable. MAX bot is disabled.')
+        logger.warning('MAX is enabled, but MAX_BOT_TOKEN is not configured or maxapi is unavailable.')
         return
     logger.info('Starting MAX polling')
     try:

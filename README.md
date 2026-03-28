@@ -64,9 +64,12 @@
 
 ## Быстрый старт
 1. Скопируйте `.env.example` в `.env`
-2. Заполните токены Telegram и MAX
-3. Убедитесь, что у MAX бота отключен webhook, так как проект использует polling
-4. Запустите:
+2. В `.env` задайте, какие боты должны работать:
+   - `TELEGRAM_ENABLED=true|false`
+   - `MAX_ENABLED=true|false`
+3. Заполните токены только для включенных ботов
+4. Убедитесь, что у MAX бота отключен webhook, так как проект использует polling
+5. Запустите:
 
 ```bash
 docker compose up -d --build
@@ -94,3 +97,27 @@ app/
 - отрицательные и нулевые суммы отклоняются
 - время напоминания проверяется строго в формате `ЧЧ:ММ`
 - на каждом шаге можно вернуться назад или в главное меню
+
+
+## Notes on Docker build
+
+The project installs `maxapi` from PyPI (`maxapi==0.9.16`) instead of cloning it from GitHub during image build. This makes `docker compose up -d --build` much more reliable on servers with slow or unstable outbound connectivity.
+
+
+## Включение и отключение ботов через .env
+
+Примеры:
+
+```env
+TELEGRAM_ENABLED=true
+MAX_ENABLED=false
+```
+
+Запустить только MAX:
+
+```env
+TELEGRAM_ENABLED=false
+MAX_ENABLED=true
+```
+
+Если бот включен, но токен пустой, приложение не упадет: оно просто запишет предупреждение в лог и продолжит работать только с доступным каналом.
