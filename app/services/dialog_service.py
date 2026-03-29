@@ -18,12 +18,13 @@ from app.services.user_service import UserService
 from app.utils.types import BotResponse, IncomingMessage
 
 MAIN_MENU_BUTTONS = [
-    ['+ Доход', '- Расход'],
-    ['Начальный баланс', 'Баланс'],
-    ['Сегодня', 'Этот месяц'],
-    ['Последние 5 операций', 'Категории'],
-    ['Добавить категорию', 'Лимит', 'Напоминание'],
-    ['Редактировать', 'Удалить'],
+    ['➕ Доход', '➖ Расход'],
+    ['💰 Начальный баланс', '💼 Баланс'],
+    ['📅 Сегодня', '🗓 Этот месяц'],
+    ['🧾 Последние 5 операций', '📂 Категории'],
+    ['➕ Категория', '✏️ Категория', '🗑 Категория'],
+    ['💸 Лимит', '⏰ Напоминание'],
+    ['✏️ Операцию', '🗑 Операцию'],
 ]
 
 CATEGORY_PREV_TEXT = '← Категории'
@@ -31,6 +32,7 @@ CATEGORY_NEXT_TEXT = 'Категории →'
 DATE_TODAY_TEXT = 'Сегодня'
 DATE_YESTERDAY_TEXT = 'Вчера'
 DATE_CUSTOM_TEXT = 'Другая дата'
+REMINDER_DISABLE_TEXT = 'Отключить напоминание'
 
 
 class DialogService:
@@ -79,9 +81,7 @@ class DialogService:
     @staticmethod
     async def load(platform: str, external_user_id: str) -> tuple[str, str, dict, list[dict]]:
         state = await DialogService.get_or_create_state(platform, external_user_id)
-        data = json.loads(state.data_json or '{}')
-        history = json.loads(state.history_json or '[]')
-        return state.flow, state.step, data, history
+        return state.flow, state.step, json.loads(state.data_json or '{}'), json.loads(state.history_json or '[]')
 
     @staticmethod
     def menu_response(text: str = MAIN_MENU_TEXT) -> BotResponse:
@@ -95,10 +95,22 @@ class DialogService:
         return BotResponse(text=dashboard, buttons=MAIN_MENU_BUTTONS)
 
     @staticmethod
+    def action_response(text: str) -> BotResponse:
+        return BotResponse(text=text, buttons=MAIN_MENU_BUTTONS)
+
+    @staticmethod
     def nav_buttons(extra: list[list[str]] | None = None) -> list[list[str]]:
         rows = list(extra or [])
         rows.append([BACK_TEXT, MENU_TEXT])
         return rows
+
+    @staticmethod
+    def date_choice_buttons() -> list[list[str]]:
+        return DialogService.nav_buttons([[DATE_TODAY_TEXT, DATE_YESTERDAY_TEXT], [DATE_CUSTOM_TEXT]])
+
+    @staticmethod
+    def normalize(text: str) -> str:
+        return (text or '').strip()
 
     @staticmethod
     def extract_amount(text: str) -> str | None:
@@ -117,18 +129,8 @@ class DialogService:
         return int(match.group(0)) if match else None
 
     @staticmethod
-    def normalize(text: str) -> str:
-        return (text or '').strip()
-
-    @staticmethod
-    def push(history: list[dict], step: str, data: dict) -> list[dict]:
-        items = list(history)
-        items.append({'step': step, 'data': dict(data)})
-        return items
-
-    @staticmethod
     def parse_date(text: str) -> date | None:
-        raw = text.strip()
+        raw = (text or '').strip()
         for fmt in ('%d.%m.%Y', '%d-%m-%Y', '%Y-%m-%d'):
             try:
                 return datetime.strptime(raw, fmt).date()
@@ -146,11 +148,22 @@ class DialogService:
             return value
 
     @staticmethod
-    def date_choice_buttons() -> list[list[str]]:
-        return DialogService.nav_buttons([
-            [DATE_TODAY_TEXT, DATE_YESTERDAY_TEXT],
-            [DATE_CUSTOM_TEXT],
-        ])
+    def push(history: list[dict], step: str, data: dict) -> list[dict]:
+        items = list(history)
+        items.append({'step': step, 'data': dict(data)})
+        return items
+
+    @staticmethod
+    def is_global_action(text: str) -> bool:
+        lowered = DialogService.normalize(text).casefold()
+        return lowered in {
+            '➕ доход', '+ доход', '➖ расход', '- расход', '💰 начальный баланс', 'начальный баланс',
+            '💼 баланс', 'баланс', '📅 сегодня', 'сегодня', '🗓 этот месяц', 'этот месяц',
+            '🧾 последние 5 операций', 'последние 5 операций', 'последние операции',
+            '📂 категории', 'категории', '➕ категория', 'добавить категорию',
+            '✏️ категория', '🗑 категория', '💸 лимит', 'лимит', '⏰ напоминание', 'напоминание',
+            '✏️ операцию', 'редактировать', '🗑 операцию', 'удалить',
+        }
 
     @staticmethod
     async def handle(msg: IncomingMessage) -> BotResponse | None:
@@ -177,10 +190,14 @@ class DialogService:
 
         if lowered == BACK_TEXT.casefold():
             if not history:
-                return await DialogService.home_response(platform=msg.platform, external_user_id=msg.user_external_id, text_prefix='Вы уже в главном меню.')
+                return await DialogService.home_response(msg.platform, msg.user_external_id, '↩️ Вы уже в главном меню.')
             snapshot = history.pop()
             await DialogService.save_state(msg.platform, msg.user_external_id, flow, snapshot['step'], snapshot['data'], history)
             return await DialogService.render_step(msg.platform, msg.user_external_id, flow, snapshot['step'], snapshot['data'])
+
+        if flow != 'idle' and DialogService.is_global_action(text):
+            await DialogService.reset_state(msg.platform, msg.user_external_id)
+            return await DialogService.start_flow_or_none(msg)
 
         if flow == 'idle':
             return await DialogService.start_flow_or_none(msg)
@@ -191,55 +208,71 @@ class DialogService:
     async def start_flow_or_none(msg: IncomingMessage) -> BotResponse | None:
         lowered = DialogService.normalize(msg.text).casefold()
         mapping = {
-            '/add': ('add_tx', 'type'),
-            'добавить операцию': ('add_tx', 'type'),
-            '+ доход': ('add_income_quick', 'amount'),
-            '- расход': ('add_expense_quick', 'amount'),
-            'начальный баланс': ('add_opening_quick', 'amount'),
-            '/edit': ('edit_tx', 'choose_id'),
-            'редактировать': ('edit_tx', 'choose_id'),
-            '/delete': ('delete_tx', 'choose_id'),
-            'удалить': ('delete_tx', 'choose_id'),
-            '/category_add': ('add_category', 'type'),
-            'категории': ('show_categories', 'show'),
-            '/report': ('report', 'period'),
-            'отчет': ('report', 'period'),
-            'сегодня': ('report_today', 'show'),
-            'этот месяц': ('report_month', 'show'),
-            'баланс': ('show_balance', 'show'),
-            'последние операции': ('show_operations', 'show'),
-            'последние 5 операций': ('show_operations', 'show'),
-            'добавить категорию': ('add_category', 'type'),
-            'лимит': ('limit', 'amount'),
-            '/limit_set': ('limit', 'amount'),
-            'напоминания': ('reminder', 'time'),
-            'напоминание': ('reminder', 'time'),
-            '/reminder_set': ('reminder', 'time'),
+            '/add': ('add_tx', 'type', {}),
+            'добавить операцию': ('add_tx', 'type', {}),
+            '➕ доход': ('add_tx', 'amount', {'type': 'income', 'type_label': 'Доход', 'category_page': 0}),
+            '+ доход': ('add_tx', 'amount', {'type': 'income', 'type_label': 'Доход', 'category_page': 0}),
+            '➖ расход': ('add_tx', 'amount', {'type': 'expense', 'type_label': 'Расход', 'category_page': 0}),
+            '- расход': ('add_tx', 'amount', {'type': 'expense', 'type_label': 'Расход', 'category_page': 0}),
+            '💰 начальный баланс': ('add_tx', 'amount', {'type': 'opening_balance', 'type_label': 'Начальный баланс', 'category_page': 0}),
+            'начальный баланс': ('add_tx', 'amount', {'type': 'opening_balance', 'type_label': 'Начальный баланс', 'category_page': 0}),
+            '/edit': ('edit_tx', 'choose_id', {}),
+            '✏️ операцию': ('edit_tx', 'choose_id', {}),
+            'редактировать': ('edit_tx', 'choose_id', {}),
+            '/delete': ('delete_tx', 'choose_id', {}),
+            '🗑 операцию': ('delete_tx', 'choose_id', {}),
+            'удалить': ('delete_tx', 'choose_id', {}),
+            '/category_add': ('add_category', 'type', {}),
+            '➕ категория': ('add_category', 'type', {}),
+            'добавить категорию': ('add_category', 'type', {}),
+            '/category_edit': ('edit_category', 'choose_id', {}),
+            '✏️ категория': ('edit_category', 'choose_id', {}),
+            '/category_delete': ('delete_category', 'choose_id', {}),
+            '🗑 категория': ('delete_category', 'choose_id', {}),
+            '📂 категории': ('show_categories', 'show', {}),
+            'категории': ('show_categories', 'show', {}),
+            '/report': ('report', 'period', {}),
+            '📅 сегодня': ('report_today', 'show', {}),
+            'сегодня': ('report_today', 'show', {}),
+            '🗓 этот месяц': ('report_month', 'show', {}),
+            'этот месяц': ('report_month', 'show', {}),
+            '💼 баланс': ('show_balance', 'show', {}),
+            'баланс': ('show_balance', 'show', {}),
+            '🧾 последние 5 операций': ('show_operations', 'show', {}),
+            'последние 5 операций': ('show_operations', 'show', {}),
+            'последние операции': ('show_operations', 'show', {}),
+            '💸 лимит': ('limit', 'amount', {}),
+            'лимит': ('limit', 'amount', {}),
+            '/limit_set': ('limit', 'amount', {}),
+            '⏰ напоминание': ('reminder', 'time', {}),
+            'напоминание': ('reminder', 'time', {}),
+            'напоминания': ('reminder', 'time', {}),
+            '/reminder_set': ('reminder', 'time', {}),
         }
         target = mapping.get(lowered)
         if not target:
             return None
 
-        flow, step = target
-        await DialogService.save_state(msg.platform, msg.user_external_id, flow, step, {}, [])
+        flow, step, initial_data = target
+        await DialogService.save_state(msg.platform, msg.user_external_id, flow, step, initial_data, [])
 
         if flow == 'show_balance':
             await DialogService.reset_state(msg.platform, msg.user_external_id)
-            return await DialogService.home_response(msg.platform, msg.user_external_id, await ReportService.get_balance(msg.platform, msg.user_external_id))
+            return DialogService.action_response(await ReportService.get_balance(msg.platform, msg.user_external_id))
         if flow == 'show_categories':
             await DialogService.reset_state(msg.platform, msg.user_external_id)
-            return await DialogService.home_response(msg.platform, msg.user_external_id, await CategoryService.list_categories(msg.platform, msg.user_external_id))
+            return DialogService.action_response(await CategoryService.list_categories(msg.platform, msg.user_external_id))
         if flow == 'show_operations':
             await DialogService.reset_state(msg.platform, msg.user_external_id)
-            return await DialogService.home_response(msg.platform, msg.user_external_id, await TransactionService.list_operations(msg.platform, msg.user_external_id, limit=5))
+            return DialogService.action_response(await TransactionService.list_operations(msg.platform, msg.user_external_id, limit=5))
         if flow == 'report_today':
             await DialogService.reset_state(msg.platform, msg.user_external_id)
-            return await DialogService.home_response(msg.platform, msg.user_external_id, await ReportService.get_period_report(msg.platform, msg.user_external_id, 'day'))
+            return DialogService.action_response(await ReportService.get_period_report(msg.platform, msg.user_external_id, 'day'))
         if flow == 'report_month':
             await DialogService.reset_state(msg.platform, msg.user_external_id)
-            return await DialogService.home_response(msg.platform, msg.user_external_id, await ReportService.get_period_report(msg.platform, msg.user_external_id, 'month'))
+            return DialogService.action_response(await ReportService.get_period_report(msg.platform, msg.user_external_id, 'month'))
 
-        return await DialogService.render_step(msg.platform, msg.user_external_id, flow, step, {})
+        return await DialogService.render_step(msg.platform, msg.user_external_id, flow, step, initial_data)
 
     @staticmethod
     async def render_step(platform: str, external_user_id: str, flow: str, step: str, data: dict) -> BotResponse:
@@ -247,41 +280,22 @@ class DialogService:
         if not user_id:
             return DialogService.menu_response('Сначала выполните /start')
 
-        if flow in {'add_income_quick', 'add_expense_quick', 'add_opening_quick'}:
-            mapping = {
-                'add_income_quick': ('income', 'Приход'),
-                'add_expense_quick': ('expense', 'Расход'),
-                'add_opening_quick': ('opening_balance', 'Начальный баланс'),
-            }
-            _tx_type, tx_label = mapping[flow]
-            if step == 'amount':
-                return BotResponse(
-                    f'Введите сумму для операции «{tx_label}». Можно писать с текстом, я возьму только число.',
-                    DialogService.nav_buttons(),
-                )
-
         if flow == 'add_tx':
             if step == 'type':
-                return BotResponse('Выберите тип операции.', DialogService.nav_buttons([
-                    ['Приход', 'Расход'],
-                    ['Начальный баланс'],
-                ]))
+                return BotResponse('Выберите тип операции.', DialogService.nav_buttons([['Приход', 'Расход'], ['Начальный баланс']]))
             if step == 'amount':
-                return BotResponse('Введите сумму. Можно писать с текстом, я возьму только число. Например: 1 250.50 руб', DialogService.nav_buttons())
+                return BotResponse(f"💵 Введите сумму для операции «{data.get('type_label', 'Операция')}».", DialogService.nav_buttons())
             if step == 'category':
-                category_type = data['type']
-                names = await DialogService.get_category_names(user_id, category_type)
+                if data.get('type') not in {'income', 'expense'}:
+                    return await DialogService.render_step(platform, external_user_id, flow, 'date_choice', data)
+                names = await DialogService.get_category_names(user_id, data['type'])
                 if not names:
-                    return BotResponse(
-                        'Категорий пока нет. Можно пропустить шаг или сначала создать категорию через раздел «Категории».',
-                        DialogService.nav_buttons([[SKIP_TEXT]]),
-                    )
+                    return BotResponse('📂 Категорий этого типа пока нет. Можно пропустить шаг.', DialogService.nav_buttons([[SKIP_TEXT]]))
                 page = max(0, int(data.get('category_page', 0)))
                 per_page = 6
                 total_pages = (len(names) - 1) // per_page + 1
                 page = min(page, total_pages - 1)
-                start = page * per_page
-                current = names[start:start + per_page]
+                current = names[page * per_page:(page + 1) * per_page]
                 rows = [[name] for name in current]
                 pager = []
                 if page > 0:
@@ -291,26 +305,20 @@ class DialogService:
                 if pager:
                     rows.append(pager)
                 rows.append([SKIP_TEXT])
+                type_label = 'дохода' if data.get('type') == 'income' else 'расхода'
                 return BotResponse(
-                    f'Выберите категорию кнопкой или введите название вручную. Страница {page + 1} из {total_pages}.',
+                    f'📂 Выберите категорию для {type_label}. Страница {page + 1} из {total_pages}.',
                     DialogService.nav_buttons(rows),
                 )
             if step == 'date_choice':
-                chosen = DialogService.format_date(data.get('transaction_date'))
-                return BotResponse(
-                    f'Выберите дату операции. Сейчас: {chosen}.',
-                    DialogService.date_choice_buttons(),
-                )
+                return BotResponse(f"📅 Выберите дату операции. Сейчас: {DialogService.format_date(data.get('transaction_date'))}.", DialogService.date_choice_buttons())
             if step == 'date_custom':
-                return BotResponse(
-                    'Введите дату в формате ДД.ММ.ГГГГ. Например: 28.03.2026',
-                    DialogService.nav_buttons(),
-                )
+                return BotResponse('Введите дату в формате ДД.ММ.ГГГГ.', DialogService.nav_buttons())
             if step == 'comment':
-                return BotResponse('Введите комментарий к операции или нажмите «Пропустить».', DialogService.nav_buttons([[SKIP_TEXT]]))
+                return BotResponse('📝 Введите комментарий к операции или нажмите «Пропустить».', DialogService.nav_buttons([[SKIP_TEXT]]))
             if step == 'confirm':
                 lines = [
-                    'Проверьте операцию:',
+                    '✅ Проверьте операцию:',
                     f"- Тип: {data.get('type_label')}",
                     f"- Сумма: {data.get('amount')}",
                     f"- Дата: {DialogService.format_date(data.get('transaction_date'))}",
@@ -323,48 +331,66 @@ class DialogService:
 
         if flow == 'add_category':
             if step == 'type':
-                return BotResponse('Для какой группы создать категорию?', DialogService.nav_buttons([['Доход', 'Расход']]))
+                return BotResponse('📂 Для какой группы создать категорию?', DialogService.nav_buttons([['Доход', 'Расход']]))
             if step == 'name':
                 return BotResponse('Введите название новой категории.', DialogService.nav_buttons())
             if step == 'confirm':
                 return BotResponse(
-                    'Проверьте новую категорию:\n'
+                    '✅ Проверьте новую категорию:\n'
                     f"- Тип: {data.get('type_label')}\n"
                     f"- Название: {data.get('name')}",
                     DialogService.nav_buttons([[CONFIRM_TEXT]]),
                 )
 
+        if flow == 'edit_category':
+            if step == 'choose_id':
+                return BotResponse(
+                    '✏️ Выберите ID категории для редактирования.\n\n' + await CategoryService.list_categories(platform, external_user_id),
+                    DialogService.nav_buttons(await DialogService.category_buttons(platform, external_user_id)),
+                )
+            if step == 'name':
+                return BotResponse('✏️ Введите новое название категории.', DialogService.nav_buttons())
+            if step == 'confirm':
+                return BotResponse(
+                    '✅ Проверьте изменения категории:\n'
+                    f"- ID: {data.get('category_id')}\n"
+                    f"- Новое название: {data.get('name')}",
+                    DialogService.nav_buttons([[CONFIRM_TEXT]]),
+                )
+
+        if flow == 'delete_category':
+            if step == 'choose_id':
+                return BotResponse(
+                    '🗑 Выберите ID категории для удаления.\n\n' + await CategoryService.list_categories(platform, external_user_id),
+                    DialogService.nav_buttons(await DialogService.category_buttons(platform, external_user_id)),
+                )
+            if step == 'confirm':
+                return BotResponse(f"🗑 Удалить категорию #{data.get('category_id')}?", DialogService.nav_buttons([[CONFIRM_TEXT]]))
+
         if flow == 'report' and step == 'period':
-            return BotResponse('Выберите период отчета.', DialogService.nav_buttons([['День', 'Месяц', 'Год']]))
+            return BotResponse('📊 Выберите период отчета.', DialogService.nav_buttons([['День', 'Месяц', 'Год']]))
 
         if flow == 'limit' and step == 'amount':
             current = await ReportService.get_limit_status(platform, external_user_id)
-            return BotResponse(
-                'Введите новый месячный лимит. Я возьму только число из сообщения.\n\n' + current,
-                DialogService.nav_buttons(),
-            )
+            return BotResponse('💸 Введите новый месячный лимит.\n\n' + current, DialogService.nav_buttons())
 
         if flow == 'reminder' and step == 'time':
             current = await DialogService.get_reminder_status(platform, external_user_id)
-            return BotResponse(
-                'Введите время напоминания в формате ЧЧ:ММ, например 21:00.\n\n' + current,
-                DialogService.nav_buttons([['Отключить напоминание']]),
-            )
+            return BotResponse('⏰ Введите время напоминания в формате ЧЧ:ММ.\n\n' + current, DialogService.nav_buttons([[REMINDER_DISABLE_TEXT]]))
 
         if flow == 'edit_tx':
             if step == 'choose_id':
-                id_buttons = await DialogService.operation_buttons(platform, external_user_id)
                 return BotResponse(
-                    'Выберите ID операции для редактирования кнопкой или введите номер вручную.\n\n' + await TransactionService.list_operations(platform, external_user_id, limit=5),
-                    DialogService.nav_buttons(id_buttons),
+                    '✏️ Выберите ID операции для редактирования.\n\n' + await TransactionService.list_operations(platform, external_user_id, limit=5),
+                    DialogService.nav_buttons(await DialogService.operation_buttons(platform, external_user_id)),
                 )
             if step == 'amount':
-                return BotResponse('Введите новую сумму. Я извлеку только число из сообщения.', DialogService.nav_buttons())
+                return BotResponse('💵 Введите новую сумму.', DialogService.nav_buttons())
             if step == 'comment':
-                return BotResponse('Введите новый комментарий или нажмите «Пропустить».', DialogService.nav_buttons([[SKIP_TEXT]]))
+                return BotResponse('📝 Введите новый комментарий или нажмите «Пропустить».', DialogService.nav_buttons([[SKIP_TEXT]]))
             if step == 'confirm':
                 return BotResponse(
-                    'Проверьте изменения:\n'
+                    '✅ Проверьте изменения:\n'
                     f"- ID: {data.get('tx_id')}\n"
                     f"- Сумма: {data.get('amount')}\n"
                     f"- Комментарий: {data.get('comment') or 'без комментария'}",
@@ -373,13 +399,12 @@ class DialogService:
 
         if flow == 'delete_tx':
             if step == 'choose_id':
-                id_buttons = await DialogService.operation_buttons(platform, external_user_id)
                 return BotResponse(
-                    'Выберите ID операции для удаления кнопкой или введите номер вручную.\n\n' + await TransactionService.list_operations(platform, external_user_id, limit=5),
-                    DialogService.nav_buttons(id_buttons),
+                    '🗑 Выберите ID операции для удаления.\n\n' + await TransactionService.list_operations(platform, external_user_id, limit=5),
+                    DialogService.nav_buttons(await DialogService.operation_buttons(platform, external_user_id)),
                 )
             if step == 'confirm':
-                return BotResponse(f"Удалить операцию #{data.get('tx_id')}?", DialogService.nav_buttons([[CONFIRM_TEXT]]))
+                return BotResponse(f"🗑 Удалить операцию #{data.get('tx_id')}?", DialogService.nav_buttons([[CONFIRM_TEXT]]))
 
         await DialogService.reset_state(platform, external_user_id)
         return await DialogService.home_response(platform, external_user_id)
@@ -391,35 +416,9 @@ class DialogService:
         platform = msg.platform
         user = msg.user_external_id
 
-        if flow in {'add_income_quick', 'add_expense_quick', 'add_opening_quick'}:
-            labels = {
-                'add_income_quick': ('income', 'Приход'),
-                'add_expense_quick': ('expense', 'Расход'),
-                'add_opening_quick': ('opening_balance', 'Начальный баланс'),
-            }
-            tx_type, tx_label = labels[flow]
-            if step == 'amount':
-                amount = DialogService.extract_amount(text)
-                if not amount:
-                    return BotResponse(
-                        f'Введите сумму для операции «{tx_label}». Можно писать с текстом, я возьму только число.',
-                        DialogService.nav_buttons(),
-                    )
-                try:
-                    parsed = TransactionService.parse_amount(amount)
-                except ValueError as exc:
-                    return BotResponse(str(exc), DialogService.nav_buttons())
-                result = await TransactionService.add_transaction(platform, user, tx_type, str(parsed), None)
-                await DialogService.reset_state(platform, user)
-                return await DialogService.home_response(platform, user, result)
-
         if flow == 'add_tx':
             if step == 'type':
-                mapping = {
-                    'приход': ('income', 'Приход'),
-                    'расход': ('expense', 'Расход'),
-                    'начальный баланс': ('opening_balance', 'Начальный баланс'),
-                }
+                mapping = {'приход': ('income', 'Доход'), 'расход': ('expense', 'Расход'), 'начальный баланс': ('opening_balance', 'Начальный баланс')}
                 if lowered not in mapping:
                     return BotResponse('Выберите тип операции кнопкой или напишите: Приход, Расход, Начальный баланс.', DialogService.nav_buttons([['Приход', 'Расход'], ['Начальный баланс']]))
                 tx_type, tx_label = mapping[lowered]
@@ -442,17 +441,16 @@ class DialogService:
                 new_data['amount'] = str(parsed)
                 next_step = 'date_choice' if new_data.get('type') == 'opening_balance' else 'category'
                 await DialogService.save_state(platform, user, flow, next_step, new_data, history)
-                return await DialogService.render_step(platform, user, flow, next_step, new_data)
+                return await DialogService.render_step(platform, user, next_step == 'category' and flow or flow, next_step, new_data)
 
             if step == 'category':
-                if lowered == CATEGORY_NEXT_TEXT.casefold() or lowered == CATEGORY_PREV_TEXT.casefold():
+                if lowered in {CATEGORY_NEXT_TEXT.casefold(), CATEGORY_PREV_TEXT.casefold()}:
                     user_id = await UserService.resolve_user_id(platform, user)
                     names = await DialogService.get_category_names(user_id, data['type']) if user_id else []
-                    per_page = 6
-                    total_pages = max(1, (len(names) - 1) // per_page + 1)
                     page = int(data.get('category_page', 0))
-                    page = min(total_pages - 1, page + (1 if lowered == CATEGORY_NEXT_TEXT.casefold() else -1))
-                    page = max(0, page)
+                    total_pages = max(1, (len(names) - 1) // 6 + 1)
+                    page += 1 if lowered == CATEGORY_NEXT_TEXT.casefold() else -1
+                    page = max(0, min(total_pages - 1, page))
                     new_data = dict(data)
                     new_data['category_page'] = page
                     await DialogService.save_state(platform, user, flow, step, new_data, history)
@@ -463,7 +461,7 @@ class DialogService:
                     user_id = await UserService.resolve_user_id(platform, user)
                     category = await CategoryService.find_category_by_name(user_id, data['type'], text) if user_id else None
                     if not category:
-                        return BotResponse('Категория не найдена. Выберите кнопкой, введите точное название или нажмите «Пропустить».', (await DialogService.render_step(platform, user, flow, step, data)).buttons)
+                        return BotResponse('Категория не найдена. Выберите кнопку из списка или нажмите «Пропустить».', DialogService.nav_buttons((await DialogService.render_step(platform, user, flow, step, data)).buttons[:-1]))
                     category_name = category.name
                 history = DialogService.push(history, step, data)
                 new_data = dict(data)
@@ -473,7 +471,6 @@ class DialogService:
                 return await DialogService.render_step(platform, user, flow, 'date_choice', new_data)
 
             if step == 'date_choice':
-                selected: date | None = None
                 if lowered == DATE_TODAY_TEXT.casefold():
                     selected = date.today()
                 elif lowered == DATE_YESTERDAY_TEXT.casefold():
@@ -493,7 +490,7 @@ class DialogService:
             if step == 'date_custom':
                 parsed_date = DialogService.parse_date(text)
                 if not parsed_date:
-                    return BotResponse('Некорректная дата. Используйте формат ДД.ММ.ГГГГ, например 28.03.2026', DialogService.nav_buttons())
+                    return BotResponse('Некорректная дата. Используйте формат ДД.ММ.ГГГГ.', DialogService.nav_buttons())
                 history = DialogService.push(history, step, data)
                 new_data = dict(data)
                 new_data['transaction_date'] = parsed_date.isoformat()
@@ -511,13 +508,12 @@ class DialogService:
                 if lowered != CONFIRM_TEXT.casefold():
                     return BotResponse('Нажмите «Подтвердить» или вернитесь назад.', DialogService.nav_buttons([[CONFIRM_TEXT]]))
                 comment = data.get('comment')
-                category_name = data.get('category_name')
-                if category_name:
-                    comment = f'{category_name} {comment}'.strip() if comment else category_name
+                if data.get('category_name'):
+                    comment = f"{data['category_name']} {comment}".strip() if comment else data['category_name']
                 tx_date = DialogService.parse_date(DialogService.format_date(data.get('transaction_date')))
                 result = await TransactionService.add_transaction(platform, user, data['type'], data['amount'], comment, tx_date=tx_date)
                 await DialogService.reset_state(platform, user)
-                return await DialogService.home_response(platform, user, result)
+                return DialogService.action_response(result)
 
         if flow == 'add_category':
             if step == 'type':
@@ -543,7 +539,50 @@ class DialogService:
                     return BotResponse('Нажмите «Подтвердить» или вернитесь назад.', DialogService.nav_buttons([[CONFIRM_TEXT]]))
                 result = await CategoryService.add_category(platform, user, data['type'], data['name'])
                 await DialogService.reset_state(platform, user)
-                return await DialogService.home_response(platform, user, result)
+                return DialogService.action_response(result)
+
+        if flow == 'edit_category':
+            if step == 'choose_id':
+                category_id = DialogService.extract_int(text)
+                if not category_id or not await CategoryService.category_exists(platform, user, category_id):
+                    return BotResponse('Категория не найдена. Введите корректный ID из списка.', DialogService.nav_buttons(await DialogService.category_buttons(platform, user)))
+                history = DialogService.push(history, step, data)
+                new_data = dict(data)
+                new_data['category_id'] = category_id
+                await DialogService.save_state(platform, user, flow, 'name', new_data, history)
+                return await DialogService.render_step(platform, user, flow, 'name', new_data)
+            if step == 'name':
+                name = text.strip()
+                if len(name) < 2:
+                    return BotResponse('Название категории должно быть не короче 2 символов.', DialogService.nav_buttons())
+                history = DialogService.push(history, step, data)
+                new_data = dict(data)
+                new_data['name'] = name[:255]
+                await DialogService.save_state(platform, user, flow, 'confirm', new_data, history)
+                return await DialogService.render_step(platform, user, flow, 'confirm', new_data)
+            if step == 'confirm':
+                if lowered != CONFIRM_TEXT.casefold():
+                    return BotResponse('Нажмите «Подтвердить» или вернитесь назад.', DialogService.nav_buttons([[CONFIRM_TEXT]]))
+                result = await CategoryService.edit_category(platform, user, int(data['category_id']), data['name'])
+                await DialogService.reset_state(platform, user)
+                return DialogService.action_response(result)
+
+        if flow == 'delete_category':
+            if step == 'choose_id':
+                category_id = DialogService.extract_int(text)
+                if not category_id or not await CategoryService.category_exists(platform, user, category_id):
+                    return BotResponse('Категория не найдена. Введите корректный ID из списка.', DialogService.nav_buttons(await DialogService.category_buttons(platform, user)))
+                history = DialogService.push(history, step, data)
+                new_data = dict(data)
+                new_data['category_id'] = category_id
+                await DialogService.save_state(platform, user, flow, 'confirm', new_data, history)
+                return await DialogService.render_step(platform, user, flow, 'confirm', new_data)
+            if step == 'confirm':
+                if lowered != CONFIRM_TEXT.casefold():
+                    return BotResponse('Нажмите «Подтвердить» или вернитесь назад.', DialogService.nav_buttons([[CONFIRM_TEXT]]))
+                result = await CategoryService.delete_category(platform, user, int(data['category_id']))
+                await DialogService.reset_state(platform, user)
+                return DialogService.action_response(result)
 
         if flow == 'report' and step == 'period':
             mapping = {'день': 'day', 'месяц': 'month', 'год': 'year'}
@@ -552,7 +591,7 @@ class DialogService:
                 return BotResponse('Выберите период: День, Месяц или Год.', DialogService.nav_buttons([['День', 'Месяц', 'Год']]))
             result = await ReportService.get_period_report(platform, user, period)
             await DialogService.reset_state(platform, user)
-            return await DialogService.home_response(platform, user, result)
+            return DialogService.action_response(result)
 
         if flow == 'limit' and step == 'amount':
             amount = DialogService.extract_amount(text)
@@ -560,26 +599,26 @@ class DialogService:
                 return BotResponse('Не вижу корректной суммы лимита. Пример: 50000', DialogService.nav_buttons())
             result = await BudgetService.set_limit(platform, user, amount)
             await DialogService.reset_state(platform, user)
-            return await DialogService.home_response(platform, user, result)
+            return DialogService.action_response(result)
 
         if flow == 'reminder' and step == 'time':
-            if lowered == 'отключить напоминание':
+            if lowered == REMINDER_DISABLE_TEXT.casefold():
                 result = await ReminderService.disable_reminder(platform, user)
                 await DialogService.reset_state(platform, user)
-                return await DialogService.home_response(platform, user, result)
+                return DialogService.action_response(result)
             try:
                 datetime.strptime(text, '%H:%M')
             except ValueError:
-                return BotResponse('Некорректное время. Пример: 21:00', DialogService.nav_buttons([['Отключить напоминание']]))
+                return BotResponse('Некорректное время. Пример: 21:00', DialogService.nav_buttons([[REMINDER_DISABLE_TEXT]]))
             result = await ReminderService.set_reminder(platform, user, text)
             await DialogService.reset_state(platform, user)
-            return await DialogService.home_response(platform, user, result)
+            return DialogService.action_response(result)
 
         if flow == 'edit_tx':
             if step == 'choose_id':
                 tx_id = DialogService.extract_int(text)
                 if not tx_id or not await DialogService.operation_exists(platform, user, tx_id):
-                    return BotResponse('Операция не найдена. Введите корректный ID из списка.', DialogService.nav_buttons())
+                    return BotResponse('Операция не найдена. Введите корректный ID из списка.', DialogService.nav_buttons(await DialogService.operation_buttons(platform, user)))
                 history = DialogService.push(history, step, data)
                 new_data = dict(data)
                 new_data['tx_id'] = tx_id
@@ -589,7 +628,10 @@ class DialogService:
                 amount = DialogService.extract_amount(text)
                 if not amount:
                     return BotResponse('Не вижу корректной суммы. Пример: 999.99', DialogService.nav_buttons())
-                parsed = TransactionService.parse_amount(amount)
+                try:
+                    parsed = TransactionService.parse_amount(amount)
+                except ValueError as exc:
+                    return BotResponse(str(exc), DialogService.nav_buttons())
                 history = DialogService.push(history, step, data)
                 new_data = dict(data)
                 new_data['amount'] = str(parsed)
@@ -606,13 +648,13 @@ class DialogService:
                     return BotResponse('Нажмите «Подтвердить» или вернитесь назад.', DialogService.nav_buttons([[CONFIRM_TEXT]]))
                 result = await TransactionService.edit_transaction(platform, user, int(data['tx_id']), data['amount'], data.get('comment'))
                 await DialogService.reset_state(platform, user)
-                return await DialogService.home_response(platform, user, result)
+                return DialogService.action_response(result)
 
         if flow == 'delete_tx':
             if step == 'choose_id':
                 tx_id = DialogService.extract_int(text)
                 if not tx_id or not await DialogService.operation_exists(platform, user, tx_id):
-                    return BotResponse('Операция не найдена. Введите корректный ID из списка.', DialogService.nav_buttons())
+                    return BotResponse('Операция не найдена. Введите корректный ID из списка.', DialogService.nav_buttons(await DialogService.operation_buttons(platform, user)))
                 history = DialogService.push(history, step, data)
                 new_data = dict(data)
                 new_data['tx_id'] = tx_id
@@ -623,22 +665,20 @@ class DialogService:
                     return BotResponse('Нажмите «Подтвердить» или вернитесь назад.', DialogService.nav_buttons([[CONFIRM_TEXT]]))
                 result = await TransactionService.delete_transaction(platform, user, int(data['tx_id']))
                 await DialogService.reset_state(platform, user)
-                return await DialogService.home_response(platform, user, result)
+                return DialogService.action_response(result)
 
         await DialogService.reset_state(platform, user)
-        return await DialogService.home_response(platform, user, 'Сценарий сброшен. Выберите действие заново.')
+        return DialogService.action_response('⚠️ Сценарий сброшен. Выберите действие заново.')
 
     @staticmethod
     async def get_category_names(user_id: int, category_type: str) -> list[str]:
         async with SessionFactory() as session:
             result = await session.execute(
-                select(Category.name)
-                .where(
+                select(Category.name).where(
                     Category.user_id == user_id,
                     Category.type == category_type,
                     Category.is_archived.is_(False),
-                )
-                .order_by(Category.name)
+                ).order_by(Category.name)
             )
             return [row[0] for row in result.all()]
 
@@ -657,14 +697,13 @@ class DialogService:
         if not user_id:
             return []
         async with SessionFactory() as session:
-            result = await session.execute(
-                select(Transaction.id).where(Transaction.user_id == user_id).order_by(Transaction.transaction_date.desc(), Transaction.id.desc()).limit(5)
-            )
+            result = await session.execute(select(Transaction.id).where(Transaction.user_id == user_id).order_by(Transaction.transaction_date.desc(), Transaction.id.desc()).limit(5))
             ids = [str(row[0]) for row in result.all()]
-        rows = []
-        for idx in range(0, len(ids), 3):
-            rows.append(ids[idx:idx + 3])
-        return rows
+        return [ids[i:i + 3] for i in range(0, len(ids), 3)]
+
+    @staticmethod
+    async def category_buttons(platform: str, external_user_id: str) -> list[list[str]]:
+        return await CategoryService.category_buttons(platform, external_user_id)
 
     @staticmethod
     async def get_reminder_status(platform: str, external_user_id: str) -> str:

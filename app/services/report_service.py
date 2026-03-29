@@ -61,13 +61,13 @@ class ReportService:
 
         today_net = (Decimal(today_income or 0) + Decimal(today_opening or 0) - Decimal(today_expense or 0)).quantize(Decimal('0.01'))
         lines = [
-            'FinanceTracker',
+            '🏠 FinanceTracker',
             '',
-            f'Баланс: {balance}',
-            f'Сегодня: {today_net}',
-            f'Расходы за месяц: {month_expense}',
+            f'💼 Баланс: {balance}',
+            f'📅 Сегодня: {today_net}',
+            f'📉 Расходы за месяц: {month_expense}',
             '',
-            'Последние 5 операций:',
+            '🧾 Последние 5 операций:',
         ]
         if recent:
             for tx in recent:
@@ -99,7 +99,7 @@ class ReportService:
             ).where(Transaction.user_id == user_id)
             result = await session.execute(stmt)
             balance = Decimal(result.scalar_one() or 0).quantize(Decimal('0.01'))
-        return f'Текущий баланс: {balance}'
+        return f'💼 Текущий баланс: {balance}'
 
     @staticmethod
     async def get_period_report(platform: str, external_user_id: str, period: str) -> str:
@@ -146,7 +146,7 @@ class ReportService:
             net = income + opening - expense
 
         return (
-            f'Отчет за {period}:\n'
+            f'📊 Отчет за {period}:\n'
             f'- Период: {start_date.isoformat()} .. {end_date.isoformat()}\n'
             f'- Доходы: {income.quantize(Decimal("0.01"))}\n'
             f'- Начальный баланс: {opening.quantize(Decimal("0.01"))}\n'

@@ -31,7 +31,7 @@ class CommandRouter:
             return await DialogService.home_response(
                 msg.platform,
                 msg.user_external_id,
-                'Привет! Я FinanceTracker.\nПомогу учитывать доходы и расходы в Telegram и MAX.'
+                '👋 Привет! Я FinanceTracker.\nПомогу учитывать доходы и расходы в Telegram и MAX.'
             )
 
         if text.startswith('/help'):
@@ -42,27 +42,18 @@ class CommandRouter:
             return BotResponse('Сначала выполните /start')
 
         if text.startswith('/balance'):
-            return await DialogService.home_response(msg.platform, msg.user_external_id, await ReportService.get_balance(msg.platform, msg.user_external_id))
+            return DialogService.action_response(await ReportService.get_balance(msg.platform, msg.user_external_id))
 
         if text.startswith('/report'):
             parts = text.split(maxsplit=1)
             if len(parts) < 2:
                 return await DialogService.start_flow_or_none(
-                    IncomingMessage(
-                        platform=msg.platform,
-                        user_external_id=msg.user_external_id,
-                        chat_id=msg.chat_id,
-                        text='/report',
-                        username=msg.username,
-                        message_id=msg.message_id,
-                    )
+                    IncomingMessage(msg.platform, msg.user_external_id, msg.chat_id, '/report', msg.username, msg.message_id)
                 ) or BotResponse('Используйте: /report day|month|year')
-            return await DialogService.home_response(
-                msg.platform, msg.user_external_id, await ReportService.get_period_report(msg.platform, msg.user_external_id, parts[1].strip())
-            )
+            return DialogService.action_response(await ReportService.get_period_report(msg.platform, msg.user_external_id, parts[1].strip()))
 
         if text.startswith('/operations'):
-            return await DialogService.home_response(msg.platform, msg.user_external_id, await TransactionService.list_operations(msg.platform, msg.user_external_id))
+            return DialogService.action_response(await TransactionService.list_operations(msg.platform, msg.user_external_id))
 
         if text.startswith('/income'):
             parts = text.split(maxsplit=2)
@@ -70,9 +61,7 @@ class CommandRouter:
                 return BotResponse('Используйте: /income 2500 Зарплата')
             amount = parts[1]
             comment = parts[2] if len(parts) > 2 else None
-            return await DialogService.home_response(
-                msg.platform, msg.user_external_id, await TransactionService.add_transaction(msg.platform, msg.user_external_id, 'income', amount, comment)
-            )
+            return DialogService.action_response(await TransactionService.add_transaction(msg.platform, msg.user_external_id, 'income', amount, comment))
 
         if text.startswith('/expense'):
             parts = text.split(maxsplit=2)
@@ -80,9 +69,7 @@ class CommandRouter:
                 return BotResponse('Используйте: /expense 430 Такси')
             amount = parts[1]
             comment = parts[2] if len(parts) > 2 else None
-            return await DialogService.home_response(
-                msg.platform, msg.user_external_id, await TransactionService.add_transaction(msg.platform, msg.user_external_id, 'expense', amount, comment)
-            )
+            return DialogService.action_response(await TransactionService.add_transaction(msg.platform, msg.user_external_id, 'expense', amount, comment))
 
         if text.startswith('/opening'):
             parts = text.split(maxsplit=2)
@@ -90,79 +77,61 @@ class CommandRouter:
                 return BotResponse('Используйте: /opening 10000 Начальный баланс')
             amount = parts[1]
             comment = parts[2] if len(parts) > 2 else None
-            return await DialogService.home_response(
-                msg.platform, msg.user_external_id, await TransactionService.add_transaction(msg.platform, msg.user_external_id, 'opening_balance', amount, comment)
-            )
+            return DialogService.action_response(await TransactionService.add_transaction(msg.platform, msg.user_external_id, 'opening_balance', amount, comment))
 
         if text.startswith('/edit'):
             parts = text.split(maxsplit=3)
             if len(parts) < 3:
-                return await DialogService.start_flow_or_none(
-                    IncomingMessage(msg.platform, msg.user_external_id, msg.chat_id, '/edit', msg.username, msg.message_id)
-                ) or BotResponse('Используйте: /edit 12 499.99 Новый комментарий')
+                return await DialogService.start_flow_or_none(IncomingMessage(msg.platform, msg.user_external_id, msg.chat_id, '/edit', msg.username, msg.message_id)) or BotResponse('Используйте: /edit 12 499.99 Новый комментарий')
             tx_id = int(parts[1])
             amount = parts[2]
             comment = parts[3] if len(parts) > 3 else None
-            return await DialogService.home_response(
-                msg.platform, msg.user_external_id, await TransactionService.edit_transaction(msg.platform, msg.user_external_id, tx_id, amount, comment)
-            )
+            return DialogService.action_response(await TransactionService.edit_transaction(msg.platform, msg.user_external_id, tx_id, amount, comment))
 
         if text.startswith('/delete'):
             parts = text.split(maxsplit=1)
             if len(parts) < 2:
-                return await DialogService.start_flow_or_none(
-                    IncomingMessage(msg.platform, msg.user_external_id, msg.chat_id, '/delete', msg.username, msg.message_id)
-                ) or BotResponse('Используйте: /delete 12')
-            return await DialogService.home_response(
-                msg.platform, msg.user_external_id, await TransactionService.delete_transaction(msg.platform, msg.user_external_id, int(parts[1]))
-            )
+                return await DialogService.start_flow_or_none(IncomingMessage(msg.platform, msg.user_external_id, msg.chat_id, '/delete', msg.username, msg.message_id)) or BotResponse('Используйте: /delete 12')
+            return DialogService.action_response(await TransactionService.delete_transaction(msg.platform, msg.user_external_id, int(parts[1])))
 
         if text.startswith('/category_add'):
             parts = text.split(maxsplit=2)
             if len(parts) < 3:
-                return await DialogService.start_flow_or_none(
-                    IncomingMessage(msg.platform, msg.user_external_id, msg.chat_id, '/category_add', msg.username, msg.message_id)
-                ) or BotResponse('Используйте: /category_add expense Еда')
-            return await DialogService.home_response(
-                msg.platform, msg.user_external_id, await CategoryService.add_category(msg.platform, msg.user_external_id, parts[1].strip(), parts[2].strip())
-            )
+                return await DialogService.start_flow_or_none(IncomingMessage(msg.platform, msg.user_external_id, msg.chat_id, '/category_add', msg.username, msg.message_id)) or BotResponse('Используйте: /category_add expense Еда')
+            return DialogService.action_response(await CategoryService.add_category(msg.platform, msg.user_external_id, parts[1].strip(), parts[2].strip()))
+
+        if text.startswith('/category_edit'):
+            parts = text.split(maxsplit=2)
+            if len(parts) < 3:
+                return await DialogService.start_flow_or_none(IncomingMessage(msg.platform, msg.user_external_id, msg.chat_id, '/category_edit', msg.username, msg.message_id)) or BotResponse('Используйте: /category_edit 3 Продукты')
+            return DialogService.action_response(await CategoryService.edit_category(msg.platform, msg.user_external_id, int(parts[1]), parts[2].strip()))
 
         if text.startswith('/categories'):
-            return await DialogService.home_response(msg.platform, msg.user_external_id, await CategoryService.list_categories(msg.platform, msg.user_external_id))
+            return DialogService.action_response(await CategoryService.list_categories(msg.platform, msg.user_external_id))
 
         if text.startswith('/category_delete'):
             parts = text.split(maxsplit=1)
             if len(parts) < 2:
-                return BotResponse('Используйте: /category_delete 3')
-            return await DialogService.home_response(
-                msg.platform, msg.user_external_id, await CategoryService.delete_category(msg.platform, msg.user_external_id, int(parts[1]))
-            )
+                return await DialogService.start_flow_or_none(IncomingMessage(msg.platform, msg.user_external_id, msg.chat_id, '/category_delete', msg.username, msg.message_id)) or BotResponse('Используйте: /category_delete 3')
+            return DialogService.action_response(await CategoryService.delete_category(msg.platform, msg.user_external_id, int(parts[1])))
 
         if text.startswith('/limit_set'):
             parts = text.split(maxsplit=1)
             if len(parts) < 2:
-                return await DialogService.start_flow_or_none(
-                    IncomingMessage(msg.platform, msg.user_external_id, msg.chat_id, '/limit_set', msg.username, msg.message_id)
-                ) or BotResponse('Используйте: /limit_set 50000')
-            return await DialogService.home_response(
-                msg.platform, msg.user_external_id, await BudgetService.set_limit(msg.platform, msg.user_external_id, parts[1])
-            )
+                return await DialogService.start_flow_or_none(IncomingMessage(msg.platform, msg.user_external_id, msg.chat_id, '/limit_set', msg.username, msg.message_id)) or BotResponse('Используйте: /limit_set 50000')
+            return DialogService.action_response(await BudgetService.set_limit(msg.platform, msg.user_external_id, parts[1]))
 
         if text.startswith('/limit_status'):
-            return await DialogService.home_response(msg.platform, msg.user_external_id, await ReportService.get_limit_status(msg.platform, msg.user_external_id))
+            return DialogService.action_response(await ReportService.get_limit_status(msg.platform, msg.user_external_id))
 
         if text.startswith('/reminder_set'):
             parts = text.split(maxsplit=1)
             if len(parts) < 2:
-                return await DialogService.start_flow_or_none(
-                    IncomingMessage(msg.platform, msg.user_external_id, msg.chat_id, '/reminder_set', msg.username, msg.message_id)
-                ) or BotResponse('Используйте: /reminder_set 21:00')
-            return await DialogService.home_response(
-                msg.platform, msg.user_external_id, await ReminderService.set_reminder(msg.platform, msg.user_external_id, parts[1])
-            )
+                return await DialogService.start_flow_or_none(IncomingMessage(msg.platform, msg.user_external_id, msg.chat_id, '/reminder_set', msg.username, msg.message_id)) or BotResponse('Используйте: /reminder_set 21:00')
+            return DialogService.action_response(await ReminderService.set_reminder(msg.platform, msg.user_external_id, parts[1]))
 
         if text.startswith('/reminder_off'):
-            return await DialogService.home_response(msg.platform, msg.user_external_id, await ReminderService.disable_reminder(msg.platform, msg.user_external_id))
+            return DialogService.action_response(await ReminderService.disable_reminder(msg.platform, msg.user_external_id))
 
         return DialogService.menu_response('Неизвестная команда. Используйте кнопки меню или /help')
 
